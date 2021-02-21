@@ -1,0 +1,5 @@
+### Copy this file to user.yml
+
+binance:
+  api_key: api key here
+  api_secret_key: api secret here
