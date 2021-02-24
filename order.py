@@ -26,8 +26,12 @@ parser_create_order.add_argument("pair", help="e.g. ETHUSDT")
 parser_create_order.add_argument(
     "--start-price", help="Price to start ladder at", type=Decimal, required=True
 )
-parser_create_order.add_argument(
-    "--quantity", help="Quantity of asset to buy", type=Decimal, required=True
+group = parser_create_order.add_mutually_exclusive_group(required=True)
+group.add_argument(
+    "--quantity", help="Quantity of asset to buy", type=Decimal
+)
+group.add_argument(
+    "--quote-quantity", help="Quantity of quote to use to buy asset", type=Decimal
 )
 parser_create_order.add_argument(
     "--ladder-percent", help="Ladder gap %", default=1, type=Decimal
@@ -57,7 +61,7 @@ def get_precision(pair):
 
 
 def order_limit(quantity, price):
-    print(f"{args.pair} - {args.order_type} {quantity} @ {price}")
+    print(f"{args.pair} - {args.order_type} {quantity} @ {price} ({price * Decimal(str(quantity))})")
     if args.execute:
         if args.order_type == "buy":
             order = client.order_limit_buy(
@@ -72,8 +76,16 @@ def order_limit(quantity, price):
                 price=price,
             )
 
+def get_precision(pair):
+    info = client.get_symbol_info(pair.upper())
+    filters = info["filters"]
+    step_size = float(
+        [f for f in filters if f["filterType"] == "LOT_SIZE"][0]["stepSize"]
+    )
+    precision = int(round(-math.log(step_size, 10), 0))
+    return precision
 
-def create_ladder_order(
+def create_ladder_order_quantity(
     pair, order_type, start_price, quantity, ladder_percent, ladder_orders
 ):
     total_cost = start_price * quantity
@@ -91,6 +103,30 @@ def create_ladder_order(
         order_limit(order_quantity, ladder_price)
         ladder_price -= ladder_gap
 
+def create_ladder_order_quote_quantity(
+    pair, order_type, start_price, quote_quantity, ladder_percent, ladder_orders
+):
+    factor = 10 ** get_precision(pair)
+    # target_quantity = math.floor(target_quantity * factor) / factor
+
+    # total_cost = start_price * quote_quantity
+    quote_quantity = quote_quantity / ladder_orders
+    ladder_gap = start_price * Decimal(ladder_percent / 100)
+    if args.order_type == "sell":
+        ladder_gap = -ladder_gap
+    # print(quote_quantity, ladder_gap)
+
+    # print(f"{order_quantity=} per order")
+    # print(f"{total_cost=}")
+    print(f"{ladder_gap=}")
+
+    cost = 0
+    ladder_price = args.start_price
+    for _ in range(args.ladder_orders):
+        order_quantity = math.floor((quote_quantity / ladder_price) * factor) / factor
+        order_limit(order_quantity, ladder_price)
+        cost += (Decimal(str(order_quantity)) * ladder_price)
+        ladder_price -= ladder_gap
 
 def exit_quick(pair, pct_above=0.01):
     info = client.get_symbol_info(pair)
@@ -122,14 +158,24 @@ def fetch_balances():
 
 
 if args.command == "create-order":
-    create_ladder_order(
-        args.pair,
-        args.order_type,
-        args.start_price,
-        args.quantity,
-        args.ladder_percent,
-        args.ladder_orders,
-    )
+    if args.quantity:
+        create_ladder_order_quantity(
+            args.pair,
+            args.order_type,
+            args.start_price,
+            args.quantity,
+            args.ladder_percent,
+            args.ladder_orders,
+        )
+    else:
+        create_ladder_order_quote_quantity(
+            args.pair,
+            args.order_type,
+            args.start_price,
+            args.quote_quantity,
+            args.ladder_percent,
+            args.ladder_orders,
+        )
 elif args.command == "exit-quick":
     exit_quick(args.pair)
 elif args.command == "balances":
